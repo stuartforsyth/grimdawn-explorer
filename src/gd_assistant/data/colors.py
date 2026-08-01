@@ -40,6 +40,10 @@ _RESIST_TO_TYPE = {
     "Bleeding": "Bleeding", "Life": "Vitality", "Elemental": "Elemental",
 }
 
+# Loot-source highlight: bosses are the reliable farm targets, so their "Dropped by"
+# row is tinted orange to stand out from hero/other droppers and world drops.
+SOURCE_BOSS = "#e08a1e"
+
 # A few non-damage stats the mod also tints (kept small and readable).
 _ARMOUR = "#95a5a6"
 _ABILITY = "#b8860b"

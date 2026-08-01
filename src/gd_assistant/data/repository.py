@@ -19,6 +19,10 @@ KB_DIR = Path(__file__).resolve().parents[3] / "data" / "kb"
 
 _RARITY_ORDER = {"Broken": 0, "Common": 1, "Magical": 2, "Rare": 3, "Epic": 4, "Legendary": 5}
 
+# Notable named enemies (the reliable farm targets) get the highlighted "Dropped by"
+# row; everything else (Champion/Quest/Common) stays on the plain row.
+_BOSS_TIERS = ("SuperBoss", "Boss", "Hero")
+
 
 def _tokenise(query: str) -> list[str]:
     """Split a search query into lowercased terms, honouring double-quoted phrases.
@@ -167,8 +171,9 @@ class KnowledgeBase:
                 if dtype:
                     parts.append(dtype)
             src = self.item_sources.get(item["id"].lower())
-            if src:  # searchable by dropper name, e.g. "kyzogg"
+            if src:  # searchable by dropper name ("kyzogg") or "world drop"
                 parts.extend(d["name"] for d in src["droppers"])
+                parts.append("World drop" if not src["droppers"] else "Dropped by")
             index[item["id"]] = " | ".join(p for p in parts if p).lower()
         return index
 
@@ -280,13 +285,18 @@ class KnowledgeBase:
             rows.append((labels.friendly(field), _fmt_value(value), colors.field_color(field)))
 
         src = self.item_sources.get(item["id"].lower())
-        if src:  # who drops it (absent => random world drop, so no row)
-            shown = [d["name"] for d in src["droppers"][:8]]
-            value = ", ".join(shown)
-            remaining = src["count"] - len(shown)
-            if remaining > 0:
-                value += f" (+{remaining} more)"
-            rows.append(("Dropped by", value, None))
+        if src:  # who drops it; absent entirely => no known monster drop source
+            boss = [d["name"] for d in src["droppers"] if d["class"] in _BOSS_TIERS]
+            other = [d["name"] for d in src["droppers"] if d["class"] not in _BOSS_TIERS]
+            if boss:  # notable named enemies -> highlighted orange
+                rows.append(("Dropped by (Boss/Hero)", ", ".join(boss), colors.SOURCE_BOSS))
+            if other:
+                shown = other[:10]
+                remaining = src["count"] - len(boss) - len(shown)
+                value = ", ".join(shown) + (f" (+{remaining} more)" if remaining > 0 else "")
+                rows.append(("Dropped by", value, None))
+            if not src["droppers"]:  # in loot tables but no specific dropper
+                rows.append(("Source", "World drop", None))
         return rows
 
     def items_by(self, *, slot: str | None = None, rarity: str | None = None) -> list[dict]:

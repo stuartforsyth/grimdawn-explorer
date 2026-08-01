@@ -15,7 +15,8 @@ def test_build_item_sources_walks_tables_and_ranks_droppers():
 
     mi = "records/items/mi/gravebane_ring.dbr"          # boss-specific drop
     shared = "records/items/gear/shared_amulet.dbr"     # in a shared pool
-    world = "records/items/gear/world_legendary.dbr"    # not in any monster's tables
+    worlddrop = "records/items/gear/world_legendary.dbr"  # in a pool no monster references
+    absent = "records/items/gear/crafted_only.dbr"      # in no loot table at all
     component = "records/items/materia/comp.dbr"        # a leaf we don't track
 
     records = {
@@ -33,6 +34,10 @@ def test_build_item_sources_walks_tables_and_ranks_droppers():
         "records/items/loottables/it_loop.dbr": _rec(
             "records/items/loottables/it_loop.dbr", "LootMasterTable",
             lootName1="records/items/loottables/it_loop.dbr"),
+        # a pool that no monster references -> its items are random world drops
+        "records/items/loottables/it_world.dbr": _rec(
+            "records/items/loottables/it_world.dbr", "LootItemTable_DynWeight",
+            lootName1=worlddrop),
     }
     monsters = {
         "records/creatures/boss.dbr": _rec(
@@ -51,7 +56,7 @@ def test_build_item_sources_walks_tables_and_ranks_droppers():
             description="tagMissing", monsterClassification="Common",
             lootMisc1Item1="records/items/loottables/mt_boss.dbr"),
     }
-    tracked = {mi, shared, world}
+    tracked = {mi, shared, worlddrop, absent}
 
     out = build_item_sources(records, monsters, tags, tracked)
 
@@ -60,8 +65,10 @@ def test_build_item_sources_walks_tables_and_ranks_droppers():
     # shared amulet: both boss (via nested table) and hero; Boss ranks before Hero
     assert out[shared]["count"] == 2
     assert [d["name"] for d in out[shared]["droppers"]] == ["Gravebane", "Sethris"]
-    # world legendary and the untracked component never appear
-    assert world not in out
+    # in a loot table but no specific dropper -> surfaced as a world drop
+    assert out[worlddrop] == {"count": 0, "droppers": [], "world_drop": True}
+    # in no loot table at all, and the untracked component, never appear
+    assert absent not in out
     assert not any("comp" in k for k in out)
 
 

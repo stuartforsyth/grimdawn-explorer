@@ -271,15 +271,22 @@ def test_search_quoted_phrase_vs_loose_terms(tmp_path: Path):
 def test_item_sources_dropped_by_row_and_search(tmp_path: Path):
     _write_kb(tmp_path)
     (tmp_path / "item_sources.json").write_text(json.dumps({"meta": {}, "item_sources": {
-        "i5": {"count": 1, "droppers": [{"name": "Ol' Bloodbriar", "class": "Boss"}]}}}))
+        # a boss + a hero + a champion drop i5; i4 is a generic world drop
+        "i5": {"count": 3, "droppers": [{"name": "Ol' Bloodbriar", "class": "Boss"},
+                                        {"name": "Sir Bumbleworth", "class": "Hero"},
+                                        {"name": "Some Mook", "class": "Champion"}]},
+        "i4": {"count": 0, "droppers": [], "world_drop": True}}}))
     kb = KnowledgeBase(tmp_path)
-    # the item with a source shows a "Dropped by" row...
-    rows = {label: value for label, value, _c in kb.item_properties(kb.item("i5"))}
-    assert rows["Dropped by"] == "Ol' Bloodbriar"
-    # ...and is findable by the dropper's name (world-drop items have no such row)
-    assert [i["name"] for i in kb.search_items("bloodbriar")] == ["Asterllonos"]
-    assert "Dropped by" not in {l for l, _v, _c in kb.item_properties(kb.item("i4"))}
-    assert kb.item_sources_for("i4") is None
+    rows = {label: (value, color) for label, value, color in kb.item_properties(kb.item("i5"))}
+    # notable enemies (boss + hero) get their own row, tinted orange; the rest stay plain
+    assert rows["Dropped by (Boss/Hero)"] == ("Ol' Bloodbriar, Sir Bumbleworth", colors.SOURCE_BOSS)
+    assert rows["Dropped by"] == ("Some Mook", None)
+    # searchable by dropper name...
+    assert [i["name"] for i in kb.search_items("bloodbriar")] == ["Asterllonos"]  # i5's name
+    # ...and world drops are surfaced as a row and findable via "world drop"
+    wrows = {label: value for label, value, _c in kb.item_properties(kb.item("i4"))}
+    assert wrows["Source"] == "World drop"
+    assert "Bloodhound Shoulders" in {i["name"] for i in kb.search_items('"world drop"')}
 
 
 def test_item_with_two_conversions_folds_both(tmp_path: Path):

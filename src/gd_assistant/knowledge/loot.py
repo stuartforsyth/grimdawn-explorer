@@ -65,17 +65,23 @@ def build_item_sources(
     *,
     cap: int = 25,
 ) -> dict[str, dict]:
-    """Map item path -> {"droppers": [{name, class}], "count": n}.
+    """Map item path -> {"count": n, "droppers": [{name, class}], "world_drop": bool}.
 
     `records` supplies the loot tables (they live under `records/items/loottables/`),
     `monsters` the `Monster` records, `item_paths` the lowercased set of items we track
     (leaves are filtered to these, so components/materials are excluded). `count` is the
     true number of distinct droppers; `droppers` is capped at `cap`, ranked by how
-    notable the enemy is (SuperBoss/Boss/Hero first).
+    notable the enemy is (SuperBoss/Boss/Hero first). An item that appears in a loot
+    table but has no specific dropper (only generic pools — a random world drop) still
+    gets an entry, with empty `droppers` and `world_drop=True`. Items absent entirely
+    have no known monster drop source (crafted/quest/vendor — the data can't say).
     """
     item_paths = {p.lower() for p in item_paths}
     children = _table_children(records)
     is_table = children.__contains__
+
+    # Tracked items that appear anywhere in a loot table => obtainable as a drop.
+    droppable = {c for kids in children.values() for c in kids if c in item_paths}
 
     # Memoised: item leaves reachable from a table (cycle-guarded).
     reach_cache: dict[str, frozenset[str]] = {}
@@ -131,4 +137,8 @@ def build_item_sources(
             "count": len(ranked),
             "droppers": [{"name": name, "class": cls} for _r, name, cls in ranked[:cap]],
         }
+    # World drops: droppable, but with no specific notable dropper of their own.
+    for item in droppable:
+        if item not in out:
+            out[item] = {"count": 0, "droppers": [], "world_drop": True}
     return out
