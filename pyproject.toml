@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gd-assistant"
+version = "0.1.0"
+description = "Cross-platform desktop assistant for understanding Grim Dawn character builds, skills, and itemisation (read-only save analysis)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "TBD" }
+authors = [{ name = "Stuart Forsyth" }]
+keywords = ["grim-dawn", "arpg", "build-planner", "desktop"]
+
+dependencies = [
+    "PySide6>=6.6",       # cross-platform Qt desktop UI
+    "platformdirs>=4.0",  # per-OS config/data directories
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+gd-assistant = "gd_assistant.app:main"
+gd-assistant-build-kb = "gd_assistant.data.updater:main"
+
+[project.gui-scripts]
+gd-assistant-gui = "gd_assistant.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

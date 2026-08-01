@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Grim Dawn Build Assistant
+Comment=Explore Grim Dawn items, skills, and build synergies
+Exec=/home/stuart/code/grimdawn_editor/run.sh
+Path=/home/stuart/code/grimdawn_editor
+Terminal=false
+Categories=Game;
+Icon=applications-games
