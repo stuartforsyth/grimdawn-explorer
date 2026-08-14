@@ -124,11 +124,26 @@ def test_normalise_devotion():
          "devotionButton1": "records/ui/skills/devotion/tier2_17a.dbr",
          "devotionButton2": "records/ui/skills/devotion/tier2_17b.dbr"},
     )
-    (out,) = normalise.normalise_devotion(_records(rec), TAGS)
+    # star buttons -> granted skills carrying damage (Cold) + defensive/OA stats
+    button_a = ArzRecord("records/ui/skills/devotion/tier2_17a.dbr", "",
+                         {"skillName": "records/skills/devotion/tier2_17a.dbr"})
+    button_b = ArzRecord("records/ui/skills/devotion/tier2_17b.dbr", "",
+                         {"skillName": "records/skills/devotion/tier2_17b.dbr"})
+    skill_a = ArzRecord("records/skills/devotion/tier2_17a.dbr", "Skill_Passive",
+                        {"offensiveColdMin": 20.0, "offensiveColdMax": 40.0,
+                         "characterOffensiveAbility": 15.0})
+    skill_b = ArzRecord("records/skills/devotion/tier2_17b.dbr", "Skill_Passive",
+                        {"defensiveFire": 25.0, "characterConstitution": 10.0})
+
+    (out,) = normalise.normalise_devotion(
+        _records(rec, button_a, button_b, skill_a, skill_b), TAGS)
     assert out["name"] == "Crab"
     assert out["affinity_given"] == {"Ascendant": 3}
     assert out["affinity_required"] == {"Ascendant": 6, "Order": 4}
     assert out["star_count"] == 2
+    # damage types + capability roles derived from the star skills
+    assert out["damage_types"] == ["Cold"]
+    assert out["roles"] == ["attributes", "defensive", "offensive"]
 
 
 def test_normalise_items_with_set_and_augments():
@@ -178,11 +193,22 @@ def test_normalise_items_captures_offensive_bonuses():
 # --------------------------------------------------------------------------- #
 def _write_kb(tmp: Path) -> None:
     (tmp / "masteries.json").write_text(json.dumps({"meta": {}, "masteries": [
-        {"id": "SkillClass01", "name": "Soldier", "dir": "playerclass01", "bar_max_level": 50}]}))
+        {"id": "SkillClass01", "name": "Soldier", "dir": "playerclass01", "bar_max_level": 50},
+        {"id": "SkillClass02", "name": "Nightblade", "dir": "playerclass02", "bar_max_level": 50}]}))
     (tmp / "skills.json").write_text(json.dumps({"meta": {"built_at": "x"}, "skills": [
         {"id": "records/skills/playerclass01/bladearc1.dbr", "name": "Blade Arc",
-         "mastery": "Soldier", "mastery_dir": "playerclass01", "type": "active"}]}))
-    (tmp / "devotion.json").write_text(json.dumps({"meta": {}, "constellations": []}))
+         "mastery": "Soldier", "mastery_dir": "playerclass01", "type": "active",
+         "max_level": 16, "damage_types": ["Physical", "Bleeding"]},
+        {"id": "records/skills/playerclass02/ringoffrost.dbr", "name": "Ring of Frost",
+         "mastery": "Nightblade", "mastery_dir": "playerclass02", "type": "active",
+         "max_level": 12, "damage_types": ["Cold"]}]}))
+    (tmp / "devotion.json").write_text(json.dumps({"meta": {}, "constellations": [
+        {"id": "d1", "name": "Crab", "description": "a shield", "star_count": 3, "stars": [],
+         "affinity_required": {"Order": 4}, "affinity_given": {"Ascendant": 3},
+         "damage_types": [], "roles": ["defensive"]},
+        {"id": "d2", "name": "Hawk", "description": "swift", "star_count": 3, "stars": [],
+         "affinity_required": {"Eldritch": 5}, "affinity_given": {},
+         "damage_types": ["Cold", "Pierce"], "roles": ["offensive", "speed"]}]}))
     # broader name index also covers item-granted / pet skills not in skills.json
     (tmp / "skill_names.json").write_text(json.dumps({"meta": {}, "skill_names": {
         "records/skills/itemskills/legendary/item_gore.dbr": "Gorefeast Proc"}}))
@@ -268,6 +294,52 @@ def test_search_quoted_phrase_vs_loose_terms(tmp_path: Path):
     assert kb.search_items('"physical damage epic"') == []        # spans two properties
 
 
+def test_search_skills_and_devotions(tmp_path: Path):
+    _write_kb(tmp_path)
+    kb = KnowledgeBase(tmp_path)
+    # skills by damage type (and the "<type> damage" phrase)
+    assert [s["name"] for s in kb.search_skills("bleeding")] == ["Blade Arc"]
+    assert [s["name"] for s in kb.search_skills("physical damage")] == ["Blade Arc"]
+    assert [s["name"] for s in kb.search_skills("cold")] == ["Ring of Frost"]  # Blade Arc has none
+    # devotions by capability role, damage type, and affinity name
+    assert [d["name"] for d in kb.search_devotions("defensive")] == ["Crab"]
+    assert [d["name"] for d in kb.search_devotions("cold damage")] == ["Hawk"]
+    assert [d["name"] for d in kb.search_devotions("eldritch")] == ["Hawk"]
+    assert {d["name"] for d in kb.search_devotions("")} == {"Crab", "Hawk"}  # empty = all
+    # detail rows: damage types are colour-coded, roles/affinities surfaced
+    hawk = kb.devotion_by_id("d2")
+    props = kb.devotion_properties(hawk)
+    damage_rows = [(v, c) for label, v, c in props if label == "Damage"]
+    assert damage_rows == [("Cold", colors.TYPE_COLORS["Cold"]),
+                           ("Pierce", colors.TYPE_COLORS["Pierce"])]
+    rows = {label: (value, color) for label, value, color in props}
+    assert rows["Capabilities"] == ("offensive, speed", None)
+    assert rows["Requires"] == ("Eldritch 5", None)
+    srows = {label: value for label, value, _c in kb.skill_properties(kb.skill(
+        "records/skills/playerclass01/bladearc1.dbr"))}
+    assert srows["Mastery"] == "Soldier" and srows["Max Level"] == "16"
+
+
+def test_search_skill_class_and_affinity_facets(tmp_path: Path):
+    _write_kb(tmp_path)
+    kb = KnowledgeBase(tmp_path)
+    # filter option lists for the UI
+    assert kb.mastery_names() == ["Nightblade", "Soldier"]
+    assert set(kb.affinity_names()) == {"Ascendant", "Eldritch", "Order"}
+    # a single class narrows; an OR set spans several classes (the Nightblade+Berserker use case)
+    assert [s["name"] for s in kb.search_skills(masteries={"Soldier"})] == ["Blade Arc"]
+    assert {s["name"] for s in kb.search_skills(masteries={"Soldier", "Nightblade"})} == \
+        {"Blade Arc", "Ring of Frost"}
+    # class filter AND-combines with the text query
+    assert kb.search_skills("cold", masteries={"Soldier"}) == []
+    assert [s["name"] for s in kb.search_skills("cold", masteries={"Soldier", "Nightblade"})] == \
+        ["Ring of Frost"]
+    # affinity filter (OR) on devotions
+    assert [d["name"] for d in kb.search_devotions(affinities={"Order"})] == ["Crab"]
+    assert {d["name"] for d in kb.search_devotions(affinities={"Order", "Eldritch"})} == \
+        {"Crab", "Hawk"}
+
+
 def test_item_sources_dropped_by_row_and_search(tmp_path: Path):
     _write_kb(tmp_path)
     (tmp_path / "item_sources.json").write_text(json.dumps({"meta": {}, "item_sources": {
@@ -323,7 +395,7 @@ def test_damage_conversion_folded_into_one_row_and_searchable(tmp_path: Path):
     # the whole phrase — including the type values — is searchable
     assert [i["name"] for i in kb.search_items("cold converted to physical")] == ["Bloodhound Shoulders"]
     # the "Damage Conversion" label is searchable (matches any item with a conversion)
-    assert set(i["name"] for i in kb.search_items("damage conversion")) == {"Bloodhound Shoulders", "Asterllonos"}
+    assert {i["name"] for i in kb.search_items("damage conversion")} == {"Bloodhound Shoulders", "Asterllonos"}
 
 
 def test_item_properties_labels_and_skill_names(tmp_path: Path):
@@ -469,3 +541,59 @@ def test_real_build_resolves_all_masteries(tmp_path: Path):
     # every mastery name must be resolved (no leftover raw tags)
     assert all(m["name"] and not m["name"].startswith("tag") for m in masteries)
     assert "Soldier" in {m["name"] for m in masteries}
+
+
+# --- class names (combined mastery titles) ---------------------------------
+
+def _kb_with_classes(tmp_path: Path) -> KnowledgeBase:
+    """A minimal KB carrying two masteries and the combined-class tag index."""
+    (tmp_path / "masteries.json").write_text(json.dumps({"meta": {}, "masteries": [
+        {"id": "SkillClass05", "name": "Arcanist", "dir": "playerclass05",
+         "record": "records/skills/playerclass05/_classtraining_class05.dbr"},
+        {"id": "SkillClass06", "name": "Shaman", "dir": "playerclass06",
+         "record": "records/skills/playerclass06/_classtraining_class06.dbr"},
+    ]}))
+    (tmp_path / "class_names.json").write_text(json.dumps({"meta": {}, "class_names": {
+        "tagSkillClassName05": "Arcanist",
+        "tagSkillClassName0506": "Druid",
+    }}))
+    return KnowledgeBase(kb_dir=tmp_path)
+
+
+def test_normalise_class_names_keeps_only_class_tags() -> None:
+    tags = {"tagSkillClassName0506": "Druid", "tagBladeArc": "Blade Arc",
+            "tagSkillClassName05": "", "tagSkillClassName01": "Soldier"}
+    assert normalise.normalise_class_names(tags) == {
+        "tagSkillClassName0506": "Druid", "tagSkillClassName01": "Soldier",
+    }
+
+
+def test_class_description_dual_mastery(tmp_path: Path) -> None:
+    """A dual class needs the combined name — "Druid" isn't derivable from its parts."""
+    kb = _kb_with_classes(tmp_path)
+    assert kb.class_description("tagSkillClassName0506") == "Druid (Arcanist + Shaman)"
+
+
+def test_class_description_single_mastery_is_not_repeated(tmp_path: Path) -> None:
+    kb = _kb_with_classes(tmp_path)
+    assert kb.class_description("tagSkillClassName05") == "Arcanist"
+
+
+def test_class_description_falls_back_without_the_index(tmp_path: Path) -> None:
+    """A KB built before class_names existed still names what it can."""
+    kb = _kb_with_classes(tmp_path)
+    (tmp_path / "class_names.json").unlink()
+    kb = KnowledgeBase(kb_dir=tmp_path)
+    assert kb.class_description("tagSkillClassName0506") == "Arcanist + Shaman"
+
+
+def test_class_description_of_an_unknown_tag_is_empty(tmp_path: Path) -> None:
+    kb = _kb_with_classes(tmp_path)
+    assert kb.class_description("tagSkillClassName99") == ""
+    assert kb.class_description("") == ""
+
+
+def test_mastery_name_resolves_save_ids(tmp_path: Path) -> None:
+    kb = _kb_with_classes(tmp_path)
+    assert kb.mastery_name("06") == "Shaman"
+    assert kb.mastery_name("99") is None

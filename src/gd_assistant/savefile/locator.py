@@ -15,6 +15,11 @@ from pathlib import Path
 
 STEAM_APP_ID = "219990"
 
+# Character folders are not always directly under `save/`: retail installs put
+# main-campaign characters in `save/main/` and custom-game characters in `save/user/`.
+# Probing only `save/` finds nothing on a real install. See SPEC.md §4.
+CHARACTER_SUBDIRS = ("", "main", "user")
+
 
 def candidate_save_dirs() -> list[Path]:
     """Return plausible Grim Dawn save/ locations for the current OS, best-first.
@@ -53,9 +58,34 @@ def candidate_save_dirs() -> list[Path]:
     return candidates
 
 
+def character_dirs(save_dir: Path) -> list[Path]:
+    """Return the directories under `save_dir` that may hold `_<name>` character folders.
+
+    Yields `save_dir` itself plus any of `CHARACTER_SUBDIRS` that exist, so callers
+    handle both the flat layout and the `save/main/` + `save/user/` split.
+    """
+    out = []
+    for sub in CHARACTER_SUBDIRS:
+        candidate = save_dir / sub if sub else save_dir
+        if candidate.is_dir():
+            out.append(candidate)
+    return out
+
+
 def is_save_dir(path: Path) -> bool:
-    """True if `path` looks like a Grim Dawn save dir (has `_<name>` char folders)."""
-    return path.is_dir() and any(p.name.startswith("_") and p.is_dir() for p in path.iterdir())
+    """True if `path` looks like a Grim Dawn save dir.
+
+    Checks `path` and its `main`/`user` subdirectories for `_<name>` character folders.
+    """
+    if not path.is_dir():
+        return False
+    for holder in character_dirs(path):
+        try:
+            if any(p.name.startswith("_") and p.is_dir() for p in holder.iterdir()):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def find_save_dir() -> Path | None:
@@ -70,10 +100,20 @@ def find_save_dir() -> Path | None:
 
 
 def list_characters(save_dir: Path) -> list[Path]:
-    """Return character folders (each holding `player.gdc`) under `save_dir`."""
-    if not save_dir.is_dir():
-        return []
-    return sorted(
-        p for p in save_dir.iterdir()
-        if p.is_dir() and p.name.startswith("_") and (p / "player.gdc").exists()
-    )
+    """Return character folders (each holding `player.gdc`) under `save_dir`.
+
+    Searches `save_dir` itself and its `main`/`user` subdirectories, so both the flat
+    and the nested retail layouts resolve. Sorted by character name, case-insensitively,
+    so the UI picker ordering doesn't depend on which subdirectory a character sits in.
+    """
+    found: list[Path] = []
+    for holder in character_dirs(save_dir):
+        try:
+            entries = list(holder.iterdir())
+        except OSError:
+            continue
+        found.extend(
+            p for p in entries
+            if p.is_dir() and p.name.startswith("_") and (p / "player.gdc").exists()
+        )
+    return sorted(found, key=lambda p: p.name.lstrip("_").lower())

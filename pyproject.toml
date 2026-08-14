@@ -26,6 +26,7 @@ dev = [
 [project.scripts]
 gd-assistant = "gd_assistant.app:main"
 gd-assistant-build-kb = "gd_assistant.data.updater:main"
+gd-assistant-clone = "gd_assistant.savefile.cli:main"
 
 [project.gui-scripts]
 gd-assistant-gui = "gd_assistant.app:main"

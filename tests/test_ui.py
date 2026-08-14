@@ -44,6 +44,38 @@ def test_item_search_tab_search_and_detail(app):
     assert len(tab._detail.toPlainText()) > 0  # detail panel rendered
 
 
+def test_skill_devotion_tab_search_and_detail(app):
+    from gd_assistant.config.settings import Settings
+    from gd_assistant.ui.main_window import MainWindow
+
+    window = MainWindow(Settings())
+    tab = window._skill_tab
+
+    total = tab._table.rowCount()
+    assert total > 300                         # skills + devotions loaded
+
+    tab._search.setText("cold damage")
+    narrowed = tab._table.rowCount()
+    assert 0 < narrowed < total                # damage-type search narrows the list
+
+    tab._search.setText("defensive")           # a capability role (devotions)
+    assert tab._table.rowCount() > 0
+
+    tab._table.selectRow(0)
+    assert tab._table.item(0, 0).text()
+    assert len(tab._detail.toPlainText()) > 0  # detail panel rendered
+
+    # multi-select Class filter spans masteries (Nightblade + Berserker cold synergies)
+    tab._search.setText("cold")
+    tab._kind.setCurrentText("Skills")
+    for action in tab._class_filter._menu.actions():
+        if action.text() in ("Nightblade", "Berserker"):
+            action.setChecked(True)
+    masteries = {tab._table.item(r, 2).text() for r in range(tab._table.rowCount())}
+    assert masteries == {"Nightblade", "Berserker"}    # only the two ticked classes
+    assert tab._table.rowCount() > 1
+
+
 def test_item_search_pinning_persists_and_stays_on_top(app, tmp_path):
     from PySide6.QtCore import Qt
 

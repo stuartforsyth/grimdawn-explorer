@@ -78,6 +78,7 @@ pytest
 | `skills.json` | ~294 player skills (active/passive/modifier/transmuter, by mastery) |
 | `devotion.json` | ~110 constellations (affinities given/required, star records) |
 | `items.json` | ~6,900 named items (slot, rarity, level req, set, granted/+skills) |
+| `class_names.json` | 55 combined class titles (`...0506` → Druid), used to label characters |
 
 It merges base + expansion databases and localisation, so names always match your
 exact patch + DLC. Query it via `gd_assistant.data.repository.KnowledgeBase`. The
@@ -85,6 +86,35 @@ generated JSON is git-ignored (regenerate it locally; it's version-specific).
 
 > **Note:** PySide6 wheels may lag the newest Python releases. If install fails on
 > a very new interpreter, use a supported Python (3.11–3.13) for the GUI parts.
+
+### Characters and cloning
+
+`gd-assistant-clone list` reads your saves and prints each character's level,
+masteries, skills, devotion and equipped count.
+
+Cloning creates a **new** character; your existing saves are never written to. The
+source is only ever read, the clone is built in a temporary directory and re-parsed to
+verify it before anything is moved into place, and the source file's hash is checked
+before and after.
+
+```bash
+gd-assistant-clone list
+
+# Dry run — prints the plan, writes nothing (this is the default).
+gd-assistant-clone clone Archon --rename "Archon Test"
+
+# Recommended first real test: write to a scratch directory, not the save folder.
+gd-assistant-clone clone Archon --rename "Archon Test" --sandbox /tmp/gd-clone-test --write
+
+# Into the real save folder, so Grim Dawn lists the new character.
+gd-assistant-clone clone Archon --rename "Archon Test" --write --i-mean-it
+
+# Keep the character's name, just put it in a different folder (writes no save bytes).
+gd-assistant-clone clone Archon --folder "Archon Backup" --write --i-mean-it
+```
+
+Cloning refuses to run while Grim Dawn is open — it holds its saves and rewrites them
+on exit, which would discard the new character. Steam running is fine.
 
 ## Project layout
 

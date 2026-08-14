@@ -20,10 +20,13 @@ from gd_assistant.knowledge import extractor, loot
 from gd_assistant.knowledge.arc import load_text_tags
 from gd_assistant.knowledge.arz import ArzDatabase, ArzRecord
 
-# Only decode records we actually normalise (skips monsters, loot tables, FX, ...).
+# Only decode records we actually normalise (skips monsters, FX, ...). The devotion
+# trees resolve constellation -> star button -> granted skill (for damage/role tags):
+# ui/.../devotion/ holds the constellations + star buttons, skills/devotion/ the skills.
 _KB_PREFIXES = (
     "records/skills/playerclass",
-    "records/ui/skills/devotion/constellations/",
+    "records/skills/devotion/",
+    "records/ui/skills/devotion/",
     "records/items/",
 )
 
@@ -158,6 +161,7 @@ def build_kb(install_dir: Path, out_dir: Path, language: str = "EN") -> dict[str
         ("skill_damage", "skill_damage", skill_damage),
         ("skill_names", "skill_names", skill_names),
         ("item_sources", "item_sources", item_sources),
+        ("class_names", "class_names", normalise.normalise_class_names(tags)),
     ):
         (out_dir / f"{filename}.json").write_text(
             json.dumps({"meta": {**meta_common, "category": filename, "count": len(data)},

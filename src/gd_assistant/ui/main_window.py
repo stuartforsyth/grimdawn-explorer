@@ -31,7 +31,9 @@ from gd_assistant.data import updater
 from gd_assistant.data.repository import KB_DIR, KnowledgeBase
 from gd_assistant.knowledge import extractor
 from gd_assistant.savefile import locator
+from gd_assistant.ui.character import CharacterTab
 from gd_assistant.ui.item_search import ItemSearchTab
+from gd_assistant.ui.skill_search import SkillDevotionSearchTab
 
 
 class _KbBuildWorker(QThread):
@@ -63,8 +65,12 @@ class MainWindow(QMainWindow):
 
         tabs = QTabWidget()
         tabs.addTab(self._build_overview_tab(), "Overview")
+        self._character_tab = CharacterTab(settings=settings)
+        tabs.addTab(self._character_tab, "Character")
         self._item_tab = ItemSearchTab(settings=settings)
         tabs.addTab(self._item_tab, "Item Search")
+        self._skill_tab = SkillDevotionSearchTab()
+        tabs.addTab(self._skill_tab, "Skills & Devotions")
         self.setCentralWidget(tabs)
 
     def _build_overview_tab(self) -> QWidget:
@@ -147,6 +153,8 @@ class MainWindow(QMainWindow):
         )
         self._kb_label.setText(self._kb_status_text())
         self._item_tab.reload(KnowledgeBase())  # fresh KB -> drop cached data
+        self._skill_tab.reload(KnowledgeBase())
+        self._character_tab.reload(KnowledgeBase())
         self._update_btn.setEnabled(True)
         self._worker = None
 

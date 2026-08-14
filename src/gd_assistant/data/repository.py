@@ -119,6 +119,39 @@ class KnowledgeBase:
         """
         return self._load_index("item_sources")
 
+    @cached_property
+    def class_names(self) -> dict[str, str]:
+        """{tagSkillClassNameNNNN: name} — empty until the KB is rebuilt."""
+        return self._load_index("class_names")
+
+    def class_name(self, class_tag: str) -> str | None:
+        """Resolve a save's class tag to its combined class name, e.g. "Druid".
+
+        Returns None when the index is missing (a KB built before this was added) or
+        the tag is unknown, so callers can fall back to listing the masteries.
+        """
+        return self.class_names.get(class_tag)
+
+    def class_description(self, class_tag: str) -> str:
+        """Describe a class tag as e.g. `Druid (Arcanist + Shaman)`.
+
+        Falls back gracefully: a single mastery is just its own name (there is no
+        combined class to disambiguate), and an unresolvable tag yields whatever
+        parts *can* be named, or an empty string.
+        """
+        mastery_ids = [
+            class_tag.removeprefix("tagSkillClassName")[i : i + 2]
+            for i in range(0, len(class_tag.removeprefix("tagSkillClassName")), 2)
+        ] if class_tag.startswith("tagSkillClassName") else []
+        parts = [name for mid in mastery_ids if (name := self.mastery_name(mid))]
+        combined = self.class_name(class_tag)
+
+        if combined and len(parts) > 1:
+            return f"{combined} ({' + '.join(parts)})"
+        if combined:
+            return combined
+        return " + ".join(parts)
+
     def _load_index(self, name: str) -> dict:
         path = self.kb_dir / f"{name}.json"
         if not path.exists():
@@ -137,6 +170,44 @@ class KnowledgeBase:
     @cached_property
     def _mastery_by_record(self) -> dict[str, dict]:
         return {m["record"]: m for m in self.masteries if m.get("record")}
+
+    @cached_property
+    def _devotion_by_id(self) -> dict[str, dict]:
+        return {d["id"]: d for d in self.devotion}
+
+    def devotion_by_id(self, dev_id: str) -> dict | None:
+        return self._devotion_by_id.get(dev_id)
+
+    @cached_property
+    def _constellation_by_star(self) -> dict[str, dict]:
+        """Star record basename -> the constellation that owns it.
+
+        Saves reference individual stars as `records/skills/devotion/tier1_01a.dbr`,
+        while the KB stores them under the UI tree (`records/ui/skills/devotion/...`).
+        The basename is the part both agree on, so that is what's indexed.
+        """
+        index: dict[str, dict] = {}
+        for constellation in self.devotion:
+            for star in constellation.get("stars") or ():
+                index[star.rsplit("/", 1)[-1]] = constellation
+        return index
+
+    def constellation_for_star(self, star_record: str) -> dict | None:
+        """Return the constellation a devotion star belongs to, if known."""
+        return self._constellation_by_star.get(star_record.rsplit("/", 1)[-1])
+
+    @cached_property
+    def _mastery_by_dir(self) -> dict[str, dict]:
+        return {m["dir"]: m for m in self.masteries if m.get("dir")}
+
+    def mastery_name(self, mastery_id: str) -> str | None:
+        """Resolve a two-digit mastery id (as stored in a save) to its name.
+
+        A character's class tag and its `_classtraining_classNN` skill records both
+        carry this id, e.g. `09` -> "Oathkeeper".
+        """
+        mastery = self._mastery_by_dir.get(f"playerclass{mastery_id}")
+        return mastery.get("name") if mastery else None
 
     @cached_property
     def _item_search_index(self) -> dict[str, str]:
@@ -175,6 +246,32 @@ class KnowledgeBase:
                 parts.extend(d["name"] for d in src["droppers"])
                 parts.append("World drop" if not src["droppers"] else "Dropped by")
             index[item["id"]] = " | ".join(p for p in parts if p).lower()
+        return index
+
+    @staticmethod
+    def _damage_tokens(damage_types: list[str]) -> list[str]:
+        """Each type plus a "<type> damage" phrase, so "cold damage" matches too."""
+        return [*damage_types, *(f"{d} damage" for d in damage_types)]
+
+    @cached_property
+    def _skill_search_index(self) -> dict[str, str]:
+        """Skill id -> lowercased searchable text (name + mastery + type + damage)."""
+        index: dict[str, str] = {}
+        for s in self.skills:
+            parts = [s.get("name") or "", s.get("mastery") or "", s.get("type") or "",
+                     s.get("description") or "", *self._damage_tokens(s.get("damage_types") or [])]
+            index[s["id"]] = " | ".join(p for p in parts if p).lower()
+        return index
+
+    @cached_property
+    def _devotion_search_index(self) -> dict[str, str]:
+        """Constellation id -> searchable text (name + damage + roles + affinities)."""
+        index: dict[str, str] = {}
+        for d in self.devotion:
+            parts = ["devotion", "constellation", d.get("name") or "", d.get("description") or "",
+                     *self._damage_tokens(d.get("damage_types") or []), *(d.get("roles") or []),
+                     *(d.get("affinity_required") or {}), *(d.get("affinity_given") or {})]
+            index[d["id"]] = " | ".join(p for p in parts if p).lower()
         return index
 
     # -- queries ----------------------------------------------------------
@@ -224,6 +321,86 @@ class KnowledgeBase:
         else:
             result = list(self.items)
         return self._sort_items(result, sort_by, descending)
+
+    def mastery_names(self) -> list[str]:
+        """All mastery display names (for the Class filter), sorted."""
+        return sorted(m["name"] for m in self.masteries if m.get("name"))
+
+    def affinity_names(self) -> list[str]:
+        """All devotion affinity names (for the Affinity filter), sorted."""
+        names: set[str] = set()
+        for d in self.devotion:
+            names.update(d.get("affinity_required") or {})
+            names.update(d.get("affinity_given") or {})
+        return sorted(names)
+
+    def search_skills(self, query: str = "", *, masteries: set[str] | None = None) -> list[dict]:
+        """Player skills matching every term in `query` (name/mastery/type/damage).
+
+        Terms follow the same rules as `search_items` (whitespace = AND, `"quotes"` =
+        phrase). `masteries` is an OR set of mastery names (empty/None = all classes) —
+        so you can span e.g. {Nightblade, Berserker}. Sorted by mastery then name.
+        """
+        terms = _tokenise(query)
+        index = self._skill_search_index
+        result = [
+            s for s in self.skills
+            if (not masteries or s.get("mastery") in masteries)
+            and all(t in index[s["id"]] for t in terms)
+        ]
+        return sorted(result, key=lambda s: ((s.get("mastery") or "").lower(), (s.get("name") or "").lower()))
+
+    def search_devotions(self, query: str = "", *, affinities: set[str] | None = None) -> list[dict]:
+        """Constellations matching every term in `query` (name/damage/role/affinity).
+
+        `affinities` is an OR set of affinity names (empty/None = all) matched against a
+        constellation's required *or* granted affinities.
+        """
+        terms = _tokenise(query)
+        index = self._devotion_search_index
+
+        def aff_ok(d: dict) -> bool:
+            if not affinities:
+                return True
+            have = set(d.get("affinity_required") or {}) | set(d.get("affinity_given") or {})
+            return bool(have & affinities)
+
+        result = [d for d in self.devotion
+                  if aff_ok(d) and all(t in index[d["id"]] for t in terms)]
+        return sorted(result, key=lambda d: (d.get("name") or "").lower())
+
+    def skill_properties(self, skill: dict) -> list[tuple[str, str, str | None]]:
+        """Ordered (label, value, colour) rows describing a skill for the detail panel."""
+        rows: list[tuple[str, str, str | None]] = [("Name", skill.get("name") or "", None)]
+        for label, field in (("Mastery", "mastery"), ("Type", "type")):
+            if skill.get(field):
+                rows.append((label, str(skill[field]), None))
+        if skill.get("max_level"):
+            rows.append(("Max Level", str(skill["max_level"]), None))
+        for dtype in skill.get("damage_types") or []:
+            rows.append(("Damage", dtype, colors.type_color(dtype)))
+        if skill.get("description"):
+            rows.append(("Description", str(skill["description"]), None))
+        return rows
+
+    def devotion_properties(self, dev: dict) -> list[tuple[str, str, str | None]]:
+        """Ordered (label, value, colour) rows describing a constellation."""
+        def _fmt_aff(aff: dict) -> str:
+            return ", ".join(f"{name} {amt}" for name, amt in aff.items())
+
+        rows: list[tuple[str, str, str | None]] = [("Name", dev.get("name") or "", None)]
+        rows.append(("Stars", str(dev.get("star_count") or len(dev.get("stars") or [])), None))
+        if dev.get("affinity_required"):
+            rows.append(("Requires", _fmt_aff(dev["affinity_required"]), None))
+        if dev.get("affinity_given"):
+            rows.append(("Grants Affinity", _fmt_aff(dev["affinity_given"]), None))
+        for dtype in dev.get("damage_types") or []:
+            rows.append(("Damage", dtype, colors.type_color(dtype)))
+        if dev.get("roles"):
+            rows.append(("Capabilities", ", ".join(dev["roles"]), None))
+        if dev.get("description"):
+            rows.append(("Description", str(dev["description"]), None))
+        return rows
 
     def sort_items(self, items: list[dict], sort_by: str, descending: bool = False) -> list[dict]:
         """Public sort helper (used to keep pinned rows ordered like the rest)."""

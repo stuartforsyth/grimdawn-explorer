@@ -66,6 +66,21 @@ def _mastery_dir_names(masteries: list[dict]) -> dict[str, str]:
     return {m["dir"]: m["name"] for m in masteries if m.get("dir")}
 
 
+def normalise_class_names(tags: dict[str, str]) -> dict[str, str]:
+    """Map `tagSkillClassNameNNNN` -> display name, e.g. `...0506` -> "Druid".
+
+    A save's header stores this tag verbatim (SPEC §5.1), so it's the only way to
+    name a character's *combined* class — "Druid" is not derivable from "Arcanist"
+    and "Shaman". The tags live in the text archives rather than the record database,
+    which is why they need capturing here.
+    """
+    return {
+        tag: name
+        for tag, name in tags.items()
+        if tag.startswith("tagSkillClassName") and name
+    }
+
+
 # --- skills ----------------------------------------------------------------
 def normalise_skills(
     records: dict[str, ArzRecord],
@@ -125,6 +140,66 @@ def _affinities(rec: ArzRecord, prefix: str) -> dict[str, int]:
     return result
 
 
+def _stat_roles(fields: dict[str, object]) -> set[str]:
+    """Coarse capability tags for a granted-stat record (devotion star / skill).
+
+    A small, searchable vocabulary — "offensive"/"defensive"/"sustain"/"speed"/
+    "attributes"/"retaliation" — derived from which stat *families* carry a non-zero
+    magnitude. Proc-chance/flag fields (Chance/Global/XOR) are ignored.
+    """
+    roles: set[str] = set()
+    for k, v in fields.items():
+        if k.endswith(("Chance", "Global", "XOR")) or not damage._nonzero(v):
+            continue
+        if k.startswith("offensive"):
+            roles.add("offensive")
+        elif k.startswith("retaliation"):
+            roles.add("retaliation")
+        elif k.startswith("defensive"):
+            roles.add("defensive")
+        elif k.startswith("character"):
+            if "OffensiveAbility" in k:
+                roles.add("offensive")
+            elif "DefensiveAbility" in k:
+                roles.add("defensive")
+            elif "Regen" in k:
+                roles.add("sustain")
+            elif "Speed" in k:
+                roles.add("speed")
+            elif any(a in k for a in ("Strength", "Dexterity", "Intelligence", "Constitution")):
+                roles.add("attributes")
+    return roles
+
+
+def _devotion_skill_records(rec: ArzRecord, records: dict[str, ArzRecord]):
+    """Yield the devotion *skill* record behind each of a constellation's star buttons.
+
+    Chain: constellation.devotionButtonN -> star button record -> its `skillName` ->
+    the skill that carries the granted stats (damage, resists, ...).
+    """
+    for i in range(1, 6):
+        button_path = rec.fields.get(f"devotionButton{i}")
+        button = records.get(button_path) if isinstance(button_path, str) else None
+        skill_path = button.fields.get("skillName") if button else None
+        skill = records.get(skill_path) if isinstance(skill_path, str) else None
+        if skill is not None:
+            yield skill
+
+
+def _devotion_damage_and_roles(
+    rec: ArzRecord, records: dict[str, ArzRecord],
+) -> tuple[list[str], list[str]]:
+    """Union of damage types + capability roles across a constellation's star skills."""
+    dmg: set[str] = set()
+    roles: set[str] = set()
+    for skill in _devotion_skill_records(rec, records):
+        dmg.update(damage.skill_damage_types(skill, records))
+        roles |= _stat_roles(skill.fields)
+        for linked in damage.linked_chain(skill, records):
+            roles |= _stat_roles(linked.fields)
+    return sorted(dmg), sorted(roles)
+
+
 def normalise_devotion(records: dict[str, ArzRecord], tags: dict[str, str]) -> list[dict]:
     out: list[dict] = []
     for path, rec in records.items():
@@ -136,6 +211,7 @@ def normalise_devotion(records: dict[str, ArzRecord], tags: dict[str, str]) -> l
              "devotionButton4", "devotionButton5")
             if isinstance(rec.fields.get(k), str) and rec.fields.get(k)
         ]
+        damage_types, roles = _devotion_damage_and_roles(rec, records)
         out.append({
             "id": path,
             "name": _resolve(rec.fields.get("constellationDisplayTag"), tags),
@@ -144,6 +220,8 @@ def normalise_devotion(records: dict[str, ArzRecord], tags: dict[str, str]) -> l
             "affinity_given": _affinities(rec, "affinityGiven"),
             "stars": stars,
             "star_count": len(stars),
+            "damage_types": damage_types,
+            "roles": roles,
         })
     out.sort(key=lambda d: d["name"] or d["id"])
     return out

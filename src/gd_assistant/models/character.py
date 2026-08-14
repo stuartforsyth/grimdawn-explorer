@@ -40,6 +40,7 @@ class Character:
     name: str = ""
     level: int = 0
     hardcore: bool = False
+    class_tag: str = ""   # tagSkillClassNameNNNN — names the combined class ("Druid")
     masteries: dict[str, int] = field(default_factory=dict)  # mastery id -> bar points
     skills: list[SkillAllocation] = field(default_factory=list)
     devotion: list[DevotionAllocation] = field(default_factory=list)
